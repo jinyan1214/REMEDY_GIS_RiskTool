@@ -4,6 +4,7 @@ from osgeo import ogr
 import logging.handlers
 # import Logger
 import Utils
+import scipy.stats
 
 '''
 This library contains classes and related functions that are specific to the BegrensSkade GIBV programs,
@@ -803,6 +804,45 @@ def near_analysis_sqr(xref, yref, construction_area_corners):
             near_dist_sqr = dist_sqr
 
     return near_dist_sqr
+
+def near_analysis_sqrNcorner(xref, yref, construction_area_corners):
+
+    near_dist_sqr = 999999
+    near_dist_corner_ind = 0
+
+    for ind, corner in enumerate(construction_area_corners):
+        x = corner.x
+        y = corner.y
+
+        dist_sqr = (xref-x)**2+(yref-y)**2
+
+        if dist_sqr < near_dist_sqr:
+            near_dist_sqr = dist_sqr
+            near_dist_corner_ind = ind
+
+    return near_dist_corner_ind, near_dist_sqr
+
+def gaussianAutoCorr(h, c, nug, r):
+    if h!=0:
+        gamma_h = c*(1-np.exp(-h/r))+nug
+    else:
+        gamma_h = nug
+    gamma_inf = c+nug
+    rho = 1-gamma_h/gamma_inf
+    return rho
+
+#https://scipy-cookbook.readthedocs.io/items/CorrelatedRandomSamples.html
+def generateCorrGauSample(sample_size, eig_vec, eig_val):
+    c = np.dot(eig_vec, np.diag(np.sqrt(eig_val)))
+    x = scipy.stats.norm.rvs(size = (eig_val.size, sample_size))
+    return np.dot(c, x)
+
+def dispV_Zhao2022(dist2wall, dvmax, eta, He):
+    sig = 0.46
+    dist2wall = dist2wall/He
+    dv = -1.14/(dist2wall/eta + 0.39) * 1/sig/np.sqrt(2*np.pi)*np.exp(
+        -(np.log(dist2wall/eta+0.39)-0.095)**2/(2*sig**2))*dvmax*He
+    return dv
 
 def near_analysis(xref, yref, construction_area_corners):
 
