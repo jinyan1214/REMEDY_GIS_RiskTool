@@ -512,124 +512,236 @@ def mainBegrensSkade_ImpactMap(
     tot_px = rows*cols
     px = 0
     progress = 0
+    bShorttermProb = False
 
     #logger.info("xOrigin, yOrigin, rows, cols, pixelWidht, pixelHeight: "+ str(xOrigin)+ ", "+ str(yOrigin)+ ", "+ str(rows)+ ", "+ str(cols)+ ", "+ str(pixelWidth)+ ", "+ str(pixelHeight))
-    ########## Calculate reference points matrix ######################################################
-    near_dist_corner_ind = np.zeros(rows, cols, dtype=int)
-    near_dist = np.zeros(rows, cols, dtype=np.float32)
     for row in range(0, rows):
         for col in range(0, cols):
             x = xOrigin + col * pixelWidth
             y = yOrigin - row * pixelHeight
-            near_dist_corner_ind_i, near_dist_sqr_i = BegrensSkadeLib.near_analysis_sqrNcorner(x, y, construction_area_corners)
-            
-            if near_dist_sqr_i > CALCULATION_RANGE**2:
-                continue
-
-            dtb = inData[row][col]
-            if dtb > 500 or dtb < -5:
-                logger.info("DTB outside range")
-                continue
-
-            near_dist[row, col] = np.sqrt(near_dist_sqr_i)
-            near_dist_corner_ind[row, col] = near_dist_corner_ind_i
-    ######### Calculate covariance matrix for log_dvmax and log_eta ###################
-    log_dvmax_cov = np.array(tot_px, tot_px)
-    log_eta_cov = np.array(tot_px, tot_px)
-
-    log_dvmax_var = np.log(1+dvmax_cv**2)
-    log_eta_var = np.log(1+eta_cv**2)
-    log_dvmax_mean = np.log(dvmax_mean)-log_dvmax_var/2
-    log_eta_mean = np.log(eta_mean)-log_eta_var/2
-
-    log_dvmax_nug = dvmax_nugget_ratio*log_dvmax_var
-    log_eta_nug = eta_nugget_ratio*log_eta_var
-    
-    for px_ind_i in range(0, tot_px):
-        for px_ind_j in range(0, tot_px):
-            if px_ind_i == px_ind_j:
-                log_dvmax_cov[px_ind_i, px_ind_j] = log_dvmax_var + dvmax_nugget_ratio*dvmax_mean
-                log_eta_cov[px_ind_i, px_ind_j] = log_eta_var + eta_nugget_ratio*eta_mean
-            else:
-                row_i = px_ind_i // rows
-                row_j = px_ind_j // rows
-                col_i = px_ind_i % cols
-                col_j = px_ind_j % cols
-                corner_i = construction_area_corners[near_dist_corner_ind[row_i, col_i]]
-                corner_j = construction_area_corners[near_dist_corner_ind[row_j, col_j]]
-                dist_ij = np.sqrt((corner_i.x - corner_j.x)**2 + 
-                                  (corner_i.y - corner_j.y)**2)
-                
-                log_dvmax_cov[px_ind_i, px_ind_j] = gaussianAutoCorr(dist_ij, (log_dvmax_var-log_dvmax_nug), log_dvmax_nug, dvmax_range)*log_dvmax_var
-                log_eta_cov[px_ind_i, px_ind_j] = gaussianAutoCorr(dist_ij, (log_eta_var-log_eta_nug), log_eta_nug, eta_range)*log_eta_var
-
-    ######## Generate samples for log_dvmax and log_eta
-    log_dvmax_eig_val, log_dvmax_eig_vec = scipy.linalg.eigh(log_dvmax_cov)
-    log_dvmax_eig_val = np.flip(log_dvmax_eig_val)
-    log_dvmax_eig_vec = np.flip(log_dvmax_eig_vec, axis = 1)
-
-    log_eta_eig_val, log_eta_eig_vec = scipy.linalg.eigh(log_eta_cov)
-    log_eta_eig_val = np.flip(log_eta_eig_val)
-    log_eta_eig_vec = np.flip(log_eta_eig_vec, axis = 1)
-
-    # Find 99% explained variance
-    eig_val_accu = 0.
-    eig_val_sum = log_dvmax_eig_val.sum()
-    for i in range(0, log_dvmax_eig_val.size):
-        eig_val_accu += log_dvmax_eig_val[i]
-        if eig_val_accu/eig_val_sum > 0.99:
-            break
-    dvmax_num_eig = i+1
-
-    eig_val_accu = 0.
-    eig_val_sum = log_eta_eig_val.sum()
-    for i in range(0, log_eta_eig_val.size):
-        eig_val_accu += log_eta_eig_val[i]
-        if eig_val_accu/eig_val_sum > 0.99:
-            break
-    eta_num_eig = i+1
-
-    log_dvmax_samples = generateCorrGauSample(n_sample, log_dvmax_eig_vec[:, 0:dvmax_num_eig], log_dvmax_eig_val[0:dvmax_num_eig]) + log_dvmax_mean
-    log_eta_samples = generateCorrGauSample(n_sample, log_eta_eig_vec[:, 0:eta_num_eig], log_eta_eig_val[0:eta_num_eig]) + log_eta_mean
-    # log_dvmax_samples is px_tot by n_sample matrix
-    dvmax_samples = np.exp(log_dvmax_samples)
-    eta_samples = np.exp(log_eta_samples)
-
-    ################# Calculate dv
-    short_dv_results = np.zeros(tot_px, n_sample, dtype=np.float32)
-    long_dv_results = np.zeros(tot_px, n_sample, dtype=np.float32)
-    for px_ind in range(tot_px):
-        if near_dist_sqr > CALCULATION_RANGE**2:
-            px += 1
-            new_progress = int(100 * px / tot_px)
-            if new_progress > progress:
-                progress = new_progress
-                logger.info("Progress: " + str(progress) + " %. Outside.")
-            continue
-        dtb = inData[row][col]
-        if dtb > 500 or dtb < -5:
-            logger.info("DTB outside range")
-            continue
-        if bShortterm:
-            row = px_ind // rows
-            col = px_ind % cols
-            dist = near_dist[row, col]
+            near_dist_sqr = BegrensSkadeLib.near_analysis_sqr(x, y, construction_area_corners)
             if near_dist_sqr > CALCULATION_RANGE**2:
+                px += 1
+                new_progress = int(100 * px / tot_px)
+                if new_progress > progress:
+                    progress = new_progress
+                    logger.info("Progress: " + str(progress) + " %. Outside.")
+                continue
+            dtb = inData[row][col]
+
+            if dtb > 500 or dtb < -5:
+                logger.info("DTB outside range")
+                continue
+            near_dist = np.sqrt(near_dist_sqr)
+            min_near_dist = min(min_near_dist, near_dist)
+
+            if dtb <= dry_crust_thk:
+                sv_long = 0.0
+                count_crust += 1
+
+            else:
+                # Evaluating Janbu long term settlements
+                # Lav poretrykksreduksjon
+                # Middels poretrykksreduksjon
+                # Høy poretrykksreduksjon
+
+                if pw_reduction_curve in ["Minimum", "Lav poretrykksreduksjon"]:
+                    longterm_porewr = BegrensSkadeLib.get_longterm_porewr_min(near_dist)
+                elif pw_reduction_curve in ["Mean", "Middels poretrykksreduksjon"]:
+                    longterm_porewr = BegrensSkadeLib.get_longterm_porewr_mean(near_dist)
+                else:
+                    longterm_porewr = BegrensSkadeLib.get_longterm_porewr_max(near_dist)
+
+                porewp_red_atdist = porewp_red * longterm_porewr
+
+                if porewp_red_atdist > 0:
+                    sv_long, red_adj = BegrensSkadeLib.get_sv_long_janbu(
+                        dtb,
+                        dry_crust_thk,
+                        dep_groundwater,
+                        density_sat,
+                        OCR,
+                        porewp_red_atdist,
+                        janbu_ref_stress,
+                        janbu_const,
+                        janbu_m,
+                        consolidation_time,
+                    )
+                else:
+                    sv_long = 0
+
+                #if count_clay < 50:
+                #    logger.info( "row, col, SV_LONG, near_dist, dtb: "+ str(row)+ ","+ str(col)+ ","+ str(sv_long)+ ", "+ str(near_dist)+ ", "+ str(dtb))
+                count_clay += 1
+                max_sv_long = max(max_sv_long, sv_long)
+
+            if bShortterm:
+                # Evaluating short term settlements
+                if short_term_curve in ["Wall not to bedrock - regression",
+                                        "0,5 % av byggegropdybde",
+                                        "Spunt installert til berg med høy sikkerhet",
+                                        "Norm_setning_0.5"]:
+                    sv_short, W = BegrensSkadeLib.get_sv_short_a(near_dist, excavation_depth)
+                elif short_term_curve in ["Wall not to bedrock - discrete",
+                                          "1 % av byggegropdybde",
+                                          "Spunt installert til berg med lav sikkerhet",
+                                          "Norm_setning_1"]:
+                    sv_short, W = BegrensSkadeLib.get_sv_short_b(near_dist, excavation_depth)
+                elif short_term_curve in ["Tie-back anchors - regression",
+                                          "2 % av byggegropdybde",
+                                          "Svevespunt høy sikkerhet",
+                                          "Norm_setning_2"]:
+                    sv_short, W = BegrensSkadeLib.get_sv_short_c(near_dist, excavation_depth)
+                elif short_term_curve in ["Tie-back anchors - regression",
+                                          "3 % av byggegropdybde",
+                                          "Svevespunt lav sikkerhet",
+                                          "Norm_setning_3"]:
+                    sv_short, W = BegrensSkadeLib.get_sv_short_d(near_dist, excavation_depth)
+                elif short_term_curve in ["Zhao 2023 probabilistic"]:
+                    sv_short = 0.0
+                    bShorttermProb = True
+                else:
+                    raise Exception("Not a valid regression curve: " + str(short_term_curve))
+
+            else:
+                sv_short = 0.0
+
+            outData[row, col] = sv_short + sv_long
+            px += 1
+            new_progress = int(100*px/tot_px)
+            if  new_progress > progress:
+                progress = new_progress
+                logger.info("Long term calculation progress: " + str(progress) + " %")
+    
+    if bShorttermProb:
+        px = 0
+        progress = 0
+        ########## Calculate reference points matrix ######################################################
+        near_dist_corner_ind = np.zeros(rows, cols, dtype=int)
+        near_dist = np.zeros(rows, cols, dtype=np.float32)
+        for row in range(0, rows):
+            for col in range(0, cols):
+                x = xOrigin + col * pixelWidth
+                y = yOrigin - row * pixelHeight
+                near_dist_corner_ind_i, near_dist_sqr_i = BegrensSkadeLib.near_analysis_sqrNcorner(x, y, construction_area_corners)
+                
+                if near_dist_sqr_i > CALCULATION_RANGE**2:
+                    continue
+
+                dtb = inData[row][col]
+                if dtb > 500 or dtb < -5:
+                    logger.info("DTB outside range")
+                    continue
+
+                near_dist[row, col] = np.sqrt(near_dist_sqr_i)
+                near_dist_corner_ind[row, col] = near_dist_corner_ind_i
+        ######### Calculate covariance matrix for log_dvmax and log_eta ###################
+        log_dvmax_cov = np.array(tot_px, tot_px)
+        log_eta_cov = np.array(tot_px, tot_px)
+
+        log_dvmax_var = np.log(1+dvmax_cv**2)
+        log_eta_var = np.log(1+eta_cv**2)
+        log_dvmax_mean = np.log(dvmax_mean)-log_dvmax_var/2
+        log_eta_mean = np.log(eta_mean)-log_eta_var/2
+
+        log_dvmax_nug = dvmax_nugget_ratio*log_dvmax_var
+        log_eta_nug = eta_nugget_ratio*log_eta_var
+        
+        for px_ind_i in range(0, tot_px):
+            for px_ind_j in range(0, tot_px):
+                if px_ind_i == px_ind_j:
+                    log_dvmax_cov[px_ind_i, px_ind_j] = log_dvmax_var + dvmax_nugget_ratio*dvmax_mean
+                    log_eta_cov[px_ind_i, px_ind_j] = log_eta_var + eta_nugget_ratio*eta_mean
+                else:
+                    row_i = px_ind_i // rows
+                    row_j = px_ind_j // rows
+                    col_i = px_ind_i % cols
+                    col_j = px_ind_j % cols
+                    corner_i = construction_area_corners[near_dist_corner_ind[row_i, col_i]]
+                    corner_j = construction_area_corners[near_dist_corner_ind[row_j, col_j]]
+                    dist_ij = np.sqrt((corner_i.x - corner_j.x)**2 + 
+                                    (corner_i.y - corner_j.y)**2)
+                    
+                    log_dvmax_cov[px_ind_i, px_ind_j] = BegrensSkadeLib.gaussianAutoCorr(dist_ij, (log_dvmax_var-log_dvmax_nug), log_dvmax_nug, dvmax_range)*log_dvmax_var
+                    log_eta_cov[px_ind_i, px_ind_j] = BegrensSkadeLib.gaussianAutoCorr(dist_ij, (log_eta_var-log_eta_nug), log_eta_nug, eta_range)*log_eta_var
+
+        ######## Generate samples for log_dvmax and log_eta
+        log_dvmax_eig_val, log_dvmax_eig_vec = scipy.linalg.eigh(log_dvmax_cov)
+        log_dvmax_eig_val = np.flip(log_dvmax_eig_val)
+        log_dvmax_eig_vec = np.flip(log_dvmax_eig_vec, axis = 1)
+
+        log_eta_eig_val, log_eta_eig_vec = scipy.linalg.eigh(log_eta_cov)
+        log_eta_eig_val = np.flip(log_eta_eig_val)
+        log_eta_eig_vec = np.flip(log_eta_eig_vec, axis = 1)
+
+        log_eta_cov = None # Release the memory used to store log_eta_cov
+        log_dvmax_cov = None # Release the memory used to store log_eta_cov
+        # Find 99% explained variance
+        eig_val_accu = 0.
+        eig_val_sum = log_dvmax_eig_val.sum()
+        for i in range(0, log_dvmax_eig_val.size):
+            eig_val_accu += log_dvmax_eig_val[i]
+            if eig_val_accu/eig_val_sum > 0.99:
+                break
+        dvmax_num_eig = i+1
+
+        eig_val_accu = 0.
+        eig_val_sum = log_eta_eig_val.sum()
+        for i in range(0, log_eta_eig_val.size):
+            eig_val_accu += log_eta_eig_val[i]
+            if eig_val_accu/eig_val_sum > 0.99:
+                break
+        eta_num_eig = i+1
+
+        log_dvmax_samples = BegrensSkadeLib.generateCorrGauSample(n_sample, log_dvmax_eig_vec[:, 0:dvmax_num_eig], log_dvmax_eig_val[0:dvmax_num_eig]) + log_dvmax_mean
+        log_eta_samples = BegrensSkadeLib.generateCorrGauSample(n_sample, log_eta_eig_vec[:, 0:eta_num_eig], log_eta_eig_val[0:eta_num_eig]) + log_eta_mean
+        # log_dvmax_samples is px_tot by n_sample matrix
+        dvmax_samples = np.exp(log_dvmax_samples)
+        eta_samples = np.exp(log_eta_samples)
+
+        # Release some useless memory
+        log_dvmax_eig_val = None
+        log_dvmax_eig_vec = None
+        log_eta_eig_val = None
+        log_eta_eig_vec = None
+        log_dvmax_samples = None
+        log_eta_samples = None
+
+        ################# Calculate dv
+        short_dv_results = np.zeros(tot_px, n_sample, dtype=np.float32)
+        # long_dv_results = np.zeros(tot_px, n_sample, dtype=np.float32) # A place holder for future probabilistic long term
+        for px_ind in range(tot_px):
+            if near_dist > CALCULATION_RANGE**2:
+                px += 1
+                new_progress = int(100 * px / tot_px)
+                if new_progress > progress:
+                    progress = new_progress
+                    logger.info("Progress: " + str(progress) + " %. Outside.")
                 continue
             dtb = inData[row][col]
             if dtb > 500 or dtb < -5:
                 logger.info("DTB outside range")
                 continue
-            for i_sample in range(0, n_sample):
-                short_dv_results[px_ind, i_sample] = dispV_Zhao2022(dist, dvmax_samples[px_ind, i_sample], eta_samples[px_ind, i_sample], excavation_depth)
-        px += 1
-        new_progress = int(100*px/tot_px)
-        if  new_progress > progress:
-            progress = new_progress
-            logger.info("Progress: " + str(progress) + " %")
-    ## Chose the 95% quantile of all possible ground displacement to be conservative
-    outData = np.quantile(short_dv_results, 0.95, axis=1) + np.quantile(long_dv_results, 0.95, axis=1)
-    outData = outData.reshape(rows, cols)
+            if bShortterm:
+                row = px_ind // rows
+                col = px_ind % cols
+                dist = near_dist[row, col]
+                if near_dist > CALCULATION_RANGE**2:
+                    continue
+                dtb = inData[row][col]
+                if dtb > 500 or dtb < -5:
+                    logger.info("DTB outside range")
+                    continue
+                for i_sample in range(0, n_sample):
+                    short_dv_results[px_ind, i_sample] = BegrensSkadeLib.dispV_Zhao2022(dist, dvmax_samples[px_ind, i_sample], eta_samples[px_ind, i_sample], excavation_depth)
+            px += 1
+            new_progress = int(100*px/tot_px)
+            if  new_progress > progress:
+                progress = new_progress
+                logger.info("Progress: " + str(progress) + " %")
+        ## Chose the 95% quantile of all possible ground displacement to be conservative
+        # outData = (np.quantile(short_dv_results, 0.95, axis=1) + np.quantile(long_dv_results, 0.95, axis=1)).reshape(rows, cols)
+        outData = outData + np.quantile(short_dv_results, 0.95, axis=1).reshape(rows, cols)
 
     logger.info("Px, tot px: " + str(px) + ", " + str(tot_px))
     logger.info("Count crust: " + str(count_crust))
@@ -641,7 +753,6 @@ def mainBegrensSkade_ImpactMap(
 
     # An alternative to store data
     # TODO: output other statistics with driver, such as mean, std, quantiles
-    # TODO: reduce memory consumption
     # TODO: Add parallel feature
     driver = dataset.GetDriver()
     outFile = output_ws + os.sep + output_name + ".tif"
