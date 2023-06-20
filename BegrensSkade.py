@@ -451,10 +451,10 @@ def mainBegrensSkade_ImpactMap(
     dvmax_nugget_ratio = 0.25,#Spatial correlation nugget effect over mean value.
     eta_mean = 1, #eta is a trough width parameter defined in Zhao TUST 2022
     eta_cv = 0.10, #Coefficient of Variation of eta,  Default value set as the value evaluated in Zhao Georisk 2023
-    eta_range = 18.38467, #Spatial correlation range of eta. Default value set as the value evaluated in Zhao Georisk 2023
+    eta_range = 5, #Spatial correlation range of eta. Default value set as the value evaluated in Zhao Georisk 2023
     eta_nugget_ratio = 0.25,#Spatial correlation nugget effect over mean value.
     n_sample = 100, #number of Monte Carlo realizations to determine probability
-
+    outQuantile = 0.75
 
 ) -> []:
 
@@ -600,6 +600,8 @@ def mainBegrensSkade_ImpactMap(
                 elif short_term_curve in ["Zhao 2023 probabilistic"]:
                     sv_short = 0.0
                     bShorttermProb = True
+                    # sv_short = BegrensSkadeLib.dispV_Zhao2022(near_dist, 0.01, 1, excavation_depth)
+                    # bShorttermProb = False
                 else:
                     raise Exception("Not a valid regression curve: " + str(short_term_curve))
 
@@ -617,8 +619,8 @@ def mainBegrensSkade_ImpactMap(
         px = 0
         progress = 0
         ########## Calculate reference points matrix ######################################################
-        near_dist_corner_ind = np.zeros(rows, cols, dtype=int)
-        near_dist = np.zeros(rows, cols, dtype=np.float32)
+        near_dist_corner_ind = np.zeros([rows, cols], dtype=int)
+        near_dist = np.zeros([rows, cols], dtype=np.float32)
         for row in range(0, rows):
             for col in range(0, cols):
                 x = xOrigin + col * pixelWidth
@@ -635,9 +637,11 @@ def mainBegrensSkade_ImpactMap(
 
                 near_dist[row, col] = np.sqrt(near_dist_sqr_i)
                 near_dist_corner_ind[row, col] = near_dist_corner_ind_i
+        logger.debug("Near dist reference points found")
+        logger.debug("Rows: " + str(rows) + "Cols: "+ str(cols))
         ######### Calculate covariance matrix for log_dvmax and log_eta ###################
-        log_dvmax_cov = np.array(tot_px, tot_px)
-        log_eta_cov = np.array(tot_px, tot_px)
+        log_dvmax_cov = np.zeros([tot_px, tot_px])
+        log_eta_cov = np.zeros([tot_px, tot_px])
 
         log_dvmax_var = np.log(1+dvmax_cv**2)
         log_eta_var = np.log(1+eta_cv**2)
@@ -653,8 +657,8 @@ def mainBegrensSkade_ImpactMap(
                     log_dvmax_cov[px_ind_i, px_ind_j] = log_dvmax_var + dvmax_nugget_ratio*dvmax_mean
                     log_eta_cov[px_ind_i, px_ind_j] = log_eta_var + eta_nugget_ratio*eta_mean
                 else:
-                    row_i = px_ind_i // rows
-                    row_j = px_ind_j // rows
+                    row_i = px_ind_i // cols
+                    row_j = px_ind_j // cols
                     col_i = px_ind_i % cols
                     col_j = px_ind_j % cols
                     corner_i = construction_area_corners[near_dist_corner_ind[row_i, col_i]]
@@ -664,7 +668,7 @@ def mainBegrensSkade_ImpactMap(
                     
                     log_dvmax_cov[px_ind_i, px_ind_j] = BegrensSkadeLib.gaussianAutoCorr(dist_ij, (log_dvmax_var-log_dvmax_nug), log_dvmax_nug, dvmax_range)*log_dvmax_var
                     log_eta_cov[px_ind_i, px_ind_j] = BegrensSkadeLib.gaussianAutoCorr(dist_ij, (log_eta_var-log_eta_nug), log_eta_nug, eta_range)*log_eta_var
-
+        logger.debug("Covariance matrix computed")
         ######## Generate samples for log_dvmax and log_eta
         log_dvmax_eig_val, log_dvmax_eig_vec = scipy.linalg.eigh(log_dvmax_cov)
         log_dvmax_eig_val = np.flip(log_dvmax_eig_val)
@@ -697,8 +701,10 @@ def mainBegrensSkade_ImpactMap(
         log_eta_samples = BegrensSkadeLib.generateCorrGauSample(n_sample, log_eta_eig_vec[:, 0:eta_num_eig], log_eta_eig_val[0:eta_num_eig]) + log_eta_mean
         # log_dvmax_samples is px_tot by n_sample matrix
         dvmax_samples = np.exp(log_dvmax_samples)
+        logger.debug("median of dvmax: "+str(np.mean(dvmax_samples[0,:])))
         eta_samples = np.exp(log_eta_samples)
-
+        logger.debug("median of eta: "+str(np.mean(eta_samples[0,:])))
+        logger.debug("Samples generated")
         # Release some useless memory
         log_dvmax_eig_val = None
         log_dvmax_eig_vec = None
@@ -708,10 +714,13 @@ def mainBegrensSkade_ImpactMap(
         log_eta_samples = None
 
         ################# Calculate dv
-        short_dv_results = np.zeros(tot_px, n_sample, dtype=np.float32)
+        short_dv_results = np.zeros([tot_px, n_sample], dtype=np.float32)
         # long_dv_results = np.zeros(tot_px, n_sample, dtype=np.float32) # A place holder for future probabilistic long term
-        for px_ind in range(tot_px):
-            if near_dist > CALCULATION_RANGE**2:
+        for px_ind in range(0, tot_px):
+            row = px_ind // cols
+            col = px_ind % cols
+            dist = near_dist[row, col]
+            if dist > CALCULATION_RANGE**2:
                 px += 1
                 new_progress = int(100 * px / tot_px)
                 if new_progress > progress:
@@ -722,18 +731,8 @@ def mainBegrensSkade_ImpactMap(
             if dtb > 500 or dtb < -5:
                 logger.info("DTB outside range")
                 continue
-            if bShortterm:
-                row = px_ind // rows
-                col = px_ind % cols
-                dist = near_dist[row, col]
-                if near_dist > CALCULATION_RANGE**2:
-                    continue
-                dtb = inData[row][col]
-                if dtb > 500 or dtb < -5:
-                    logger.info("DTB outside range")
-                    continue
-                for i_sample in range(0, n_sample):
-                    short_dv_results[px_ind, i_sample] = BegrensSkadeLib.dispV_Zhao2022(dist, dvmax_samples[px_ind, i_sample], eta_samples[px_ind, i_sample], excavation_depth)
+            for i_sample in range(0, n_sample):
+                short_dv_results[px_ind, i_sample] = BegrensSkadeLib.dispV_Zhao2022(dist, dvmax_samples[px_ind, i_sample], eta_samples[px_ind, i_sample], excavation_depth)
             px += 1
             new_progress = int(100*px/tot_px)
             if  new_progress > progress:
@@ -741,7 +740,8 @@ def mainBegrensSkade_ImpactMap(
                 logger.info("Progress: " + str(progress) + " %")
         ## Chose the 95% quantile of all possible ground displacement to be conservative
         # outData = (np.quantile(short_dv_results, 0.95, axis=1) + np.quantile(long_dv_results, 0.95, axis=1)).reshape(rows, cols)
-        outData = outData + np.quantile(short_dv_results, 0.95, axis=1).reshape(rows, cols)
+        # outData = outData + np.quantile(short_dv_results, outQuantile, axis=1).reshape(rows, cols)
+        outData = outData + np.mean(short_dv_results, axis=1).reshape(rows, cols)
 
     logger.info("Px, tot px: " + str(px) + ", " + str(tot_px))
     logger.info("Count crust: " + str(count_crust))
@@ -753,7 +753,7 @@ def mainBegrensSkade_ImpactMap(
 
     # An alternative to store data
     # TODO: output other statistics with driver, such as mean, std, quantiles
-    # TODO: Add parallel feature
+    # TODO: Add parallel processing
     driver = dataset.GetDriver()
     outFile = output_ws + os.sep + output_name + ".tif"
     logger.info(outFile)

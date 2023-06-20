@@ -836,11 +836,11 @@ def generateCorrGauSample(sample_size, eig_vec, eig_val):
     c = np.dot(eig_vec, np.diag(np.sqrt(eig_val)))
     x = scipy.stats.norm.rvs(size = (eig_val.size, sample_size))
     return np.dot(c, x)
-
+# dvmax is the ratio between max dv and He, He is in the unit of meter. returned dv is millimeter
 def dispV_Zhao2022(dist2wall, dvmax, eta, He):
     sig = 0.46
     dist2wall = dist2wall/He
-    dv = -1.14/(dist2wall/eta + 0.39) * 1/sig/np.sqrt(2*np.pi)*np.exp(
+    dv = 1.14/(dist2wall/eta + 0.39) * 1/sig/np.sqrt(2*np.pi)*np.exp(
         -(np.log(dist2wall/eta+0.39)-0.095)**2/(2*sig**2))*dvmax*He
     return dv
 

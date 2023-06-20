@@ -1,8 +1,8 @@
 coding_guide = 0 #avoids some sort of coding interpretation bugs
 # Prepared for open source release August 2022
 
-log_path = r'C:\Users\AOL\Documents\ArcGIS\BegrensSkadeCode\log'
-lyr_path = r'C:\Users\AOL\Documents\ArcGIS\BegrensSkadeCode\lyr'
+log_path = r'C:\Users\Jinyan\Documents\ArcGIS\Projects\GIBV_test\REMEDY_GIS_RiskTool_JZ\log'
+lyr_path = r'C:\Users\Jinyan\Documents\ArcGIS\Projects\GIBV_test\REMEDY_GIS_RiskTool_JZ\lyr'
 
 import arcpy
 import sys
@@ -67,6 +67,17 @@ janbu_ref_stress = arcpy.GetParameter(15)
 janbu_const = arcpy.GetParameter(16)
 janbu_m = arcpy.GetParameter(17)
 consolidation_time = arcpy.GetParameter(18)
+dvmax_stats = arcpy.GetParameter(19)
+dvmax_mean = dvmax_stats.getTrueValue(0,0)
+dvmax_cv = dvmax_stats.getTrueValue(0,1)
+dvmax_range = dvmax_stats.getTrueValue(0,2)
+dvmax_nugget_ratio = dvmax_stats.getTrueValue(0,3)
+eta_stats = arcpy.GetParameter(20)
+eta_mean = eta_stats.getTrueValue(0,0)
+eta_cv = eta_stats.getTrueValue(0,1)
+eta_range = eta_stats.getTrueValue(0,2)
+eta_nugget_ratio = eta_stats.getTrueValue(0,3)
+outQuantile = arcpy.GetParameter(20)
 
 #bContours = arcpy.GetParameter(19)
 #if bContours:
@@ -149,6 +160,7 @@ else:
 ############  RUN BEGRENS SKADE CORE FUNCTIONS   ##############
 arcpy.AddMessage("Running mainBegrensSkade_ImpactMap...")
 try:
+    logger.info("Before run impactMap")
     outputFiles = BegrensSkade.mainBegrensSkade_ImpactMap(
         logger,
         excavation_outline_as_json,
@@ -169,7 +181,17 @@ try:
         consolidation_time,
         bShortterm,
         excavation_depth=excavation_depth,
-        short_term_curve=short_term_curve)
+        short_term_curve=short_term_curve,
+        dvmax_mean=dvmax_mean,
+        dvmax_cv=dvmax_cv,
+        dvmax_range = dvmax_range,
+        dvmax_nugget_ratio=dvmax_nugget_ratio,
+        eta_mean=eta_mean,
+        eta_cv=eta_cv,
+        eta_range=eta_range,
+        eta_nugget_ratio = eta_nugget_ratio,
+        outQuantile = outQuantile
+        )
 except Exception:
     # Print original traceback info
     arcpy.AddError("UNEXPECTED ERROR:\n" + traceback.format_exc())
