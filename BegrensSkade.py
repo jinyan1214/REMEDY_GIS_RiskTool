@@ -12,6 +12,7 @@ import scipy.linalg
 importlib.reload(Utils)
 importlib.reload(BegrensSkadeLib)
 
+
 def mainBegrensSkade_Excavation(
     logger, #logging.handlers object "logging.getLogger("name")" for debugging
     buildingsFN, #Shapefile containing buildings
@@ -34,15 +35,31 @@ def mainBegrensSkade_Excavation(
     janbu_const=4, #Janbu constant, refer to manual
     janbu_m=15, #Janbu compression modulus
     consolidation_time=1000, #Consolidation time in years
-    bVulnerability=False, #Boleean flag for building vulnerability
+    bVulnerability=False, #Boolean flag for building vulnerability
     fieldNameFoundation=None, #Shapefile field for building foundation, refer to manual
     fieldNameStructure=None, #Shapefile field for building structure, refer to manual
     fieldNameStatus=None, #Shapefile field for building status, refer to manual
+    bProbCurve = False, #Boolean flag for probabilistic ground movement curves 
+    dvmaxRF = None, #RandomFieldmodel for dvmax/He in digit, not percentage
+    dloverdvRV = None,#RandomFieldmodel for dl/dv
+    etaRF = None,#RandomFieldmodel for eta
+    MCsampleSize = None, #Int number of MC samples
+    outputQuantile = None, # quantile of ouput, between 0-1
+    bSSI=False, #Boolean flag for deterministic building soil-structural interaction
+    dvmaxOverHe = 1, # 1% of exvation depth
+    Es = None,
+    nis = None,
+    eta = 1,
+    dlmaxOverdvmax = 2,
+    buildingFeatureFieldListDeterm = None, # A list of the field name for Eb, Es, phi_int, dfoot, bfoot
+    bProbSSI=False, #Bolean flag for probabilistic soil-structural interaction
+    EsRF = None, # RandomFieldmodel for Es
+    buildingFeatureFieldListProb = None, #A list of the field name for Ebmean, Ebstd, phi_int, dfoot, bfoot
 ) -> []:
 
 
     parameter_log = open(output_ws + os.sep + "GIBV_Excavation_params_" + feature_name + ".txt", "w")
-    parameter_log.write("PARAMETER LOG FOR GIBV Excavation \n")
+    parameter_log.write("PARAMETER LOG FOR JZ GIBV Excavation \n")
     parameter_log.write(feature_name+ "\n")
     parameter_log.write("Time of run: " + str(datetime.today()) + "\n")
     parameter_log.write("-----------------------------\n")
@@ -69,6 +86,25 @@ def mainBegrensSkade_Excavation(
         parameter_log.write("Foundation field column: " + str(fieldNameFoundation)+ "\n")
         parameter_log.write("Structure field column: " + str(fieldNameStructure)+"\n")
         parameter_log.write("Status field column: " + str(fieldNameStatus)+"\n")
+    if bProbSSI or bProbCurve:
+        parameter_log.write("dvmax/He (%) Mean: " + str(dvmaxRF.mean) + "\n")
+        parameter_log.write("eta Mean: " + str(etaRF.mean) + "\n")
+        parameter_log.write("dlmax/dvmax Mean: " + str(dloverdvRV.mean) + "\n")
+        parameter_log.write("Number of Monte Carlo samples: " + str(MCsampleSize) + "\n")
+        parameter_log.write("Output quantile: " + str(outputQuantile) + "\n")
+    if bSSI:
+        parameter_log.write("Es (MPa): " + str(Es) + "\n")
+        parameter_log.write("Soil Poissoin's ratio (nis): " + str(nis) + "\n")
+    if bProbSSI:
+        parameter_log.write("Es (MPa) Mean: " + str(EsRF.mean) + "\n")
+        parameter_log.write("Eb (GPa) Mean field: " + str(buildingFeatureFieldListProb[0]) + "\n")
+        parameter_log.write("Eb CV field: " + str(buildingFeatureFieldListProb[1]) + "\n")
+        parameter_log.write("E/G Mean field: " + str(buildingFeatureFieldListProb[2]) + "\n")
+        parameter_log.write("E/G CV field: " + str(buildingFeatureFieldListProb[3]) + "\n")
+        parameter_log.write("qz (KPa) Mean field: " + str(buildingFeatureFieldListProb[4]) + "\n")
+        parameter_log.write("qz CV field: " + str(buildingFeatureFieldListProb[5]) + "\n")
+        parameter_log.write("phi_int (degree)field: " + str(buildingFeatureFieldListProb[6]) + "\n")
+        parameter_log.write("dfoot (m) field: " + str(buildingFeatureFieldListProb[7]) + "\n")
     parameter_log.close()
 
 
@@ -134,12 +170,15 @@ def mainBegrensSkade_Excavation(
     logger.info("TIME - getting buildings from shapefile")
 
     if bLongterm:
+        #TODO: this part has not been updated for SSI
         buildings = BegrensSkadeLib.get_buildings_with_dtb(
             buildingsFN,
             dtb_raster,
             fieldNameFoundation=fieldNameFoundation,
             fieldNameStructure=fieldNameStructure,
             fieldNameStatus=fieldNameStatus,
+            buildingFeatureFieldNameListDeterm = buildingFeatureFieldListDeterm,
+            buildingFeatureFieldNameListProb = buildingFeatureFieldListProb,
             logger=logger,
         )
     else:
@@ -148,8 +187,13 @@ def mainBegrensSkade_Excavation(
             fieldNameFoundation=fieldNameFoundation,
             fieldNameStructure=fieldNameStructure,
             fieldNameStatus=fieldNameStatus,
+            buildingFeatureFieldNameListDeterm = buildingFeatureFieldListDeterm,
+            buildingFeatureFieldNameListProb = buildingFeatureFieldListProb,
+            Es = Es,
+            nis = nis,
             logger=logger,
         )
+
 
     logger.info("TIME - gotten " + str(len(buildings)) + " buildings from shapefile")
 
@@ -157,10 +201,29 @@ def mainBegrensSkade_Excavation(
     logger.info("TIME - calculate settlements")
 
     buildingsWithBedrock = []
-
+    #TODO: if bProbCurve but not bSSI nor bProbSSI
+    # 1. loop through buildings and corners, find the reference points, generate RF samples at all building corners and save the MC samples as Corner.sv_shortSample
+    # 2. create a BegrensSkadeLib.get_sv_short_prob(bid, quantile)
+    if bProbCurve:
+        BegrensSkadeLib.sampleSv_short_bProbCurve(buildings, dvmaxRF, etaRF, excavation_depth, construction_area_corners, MCsampleSize, logger)
+    logger.info("Probabilistic settlement curve sample generation completed")
+    #TODO: if bProbSSI
+    # 1. loop through buildings, mesh all the buildings, generate RF samples at all building nodes, save the mesh, and disp samples as fields in buildings
+    if bProbSSI:
+        BegrensSkadeLib.meshBuildings(buildings, 1, logger)
+        BegrensSkadeLib.sample_gfDispNEs_short_bProbSSI_singleAxis(
+            buildings, 1, dvmaxRF, etaRF, dloverdvRV, EsRF, construction_area_corners, MCsampleSize, logger
+            )
+        BegrensSkadeLib.sample_gfDispNEs_short_bProbSSI_singleAxis(
+            buildings, 2, dvmaxRF, etaRF, dloverdvRV, EsRF, construction_area_corners, MCsampleSize, logger
+            )
+    logger.info("Probabilistic SSI sample generation completed")
+    
     for building in buildings:
         # filter corner duplicates and straight-wall corners
-
+        if bProbCurve and not building.adjacent:
+            logger.info("building id {0} is skipped because it's outside of maximum calculation range".format(building.bid))
+            continue
         building.filter_duplicates()
         building.filter_straights(WALL_CORNER_ANGLE_THRESHOLD)
 
@@ -178,8 +241,9 @@ def mainBegrensSkade_Excavation(
         max_sv_total = 0.0
         near_closest = 9999.0
         near_furthest = 0.0
-
-        for corner in building.corners:
+        near_closest_cid = 1000
+        near_furthest_cid = 1000
+        for corner_ind, corner in enumerate(building.corners):
 
             # Evaluating distance from every building corner to construction zone...
             near_dist, near_angle = BegrensSkadeLib.near_analysis(corner.x, corner.y, construction_area_corners)
@@ -187,8 +251,12 @@ def mainBegrensSkade_Excavation(
             corner.near_angle = near_angle
             corner.near_dist = near_dist
 
-            near_closest = min(near_dist, near_closest)
-            near_furthest = max(near_dist, near_furthest)
+            if near_dist < near_closest:
+                near_closest = near_dist
+                near_closest_cid = corner_ind
+            if near_dist > near_furthest:
+                near_furthest = near_dist
+                near_furthest_cid = corner_ind
 
             # Evaluating settlements at corners
 
@@ -213,6 +281,10 @@ def mainBegrensSkade_Excavation(
                                           "Svevespunt lav sikkerhet",
                                           "Norm_setning_3"]:
                     sv_short, W = BegrensSkadeLib.get_sv_short_d(near_dist, excavation_depth)
+                elif bProbCurve:
+                    sv_short = np.quantile(corner.sv_shortSample, outputQuantile)
+                elif short_term_curve in ["Zhao et al. (2022) Deterministic"]:
+                    sv_short = BegrensSkadeLib.get_sv_short_Zhao2022(near_dist, dvmaxOverHe, eta, excavation_depth)
                 else:
                     raise Exception("Not a valid regression curve: " + str(short_term_curve))
 
@@ -378,7 +450,41 @@ def mainBegrensSkade_Excavation(
                 logger.error("Error, type; {0}, error args: {1}, error: {2}".format(type(e), e.args, e))
                 # logger.error(e.args)
                 # logger.error(e)
-
+        if bSSI:
+            logger.debug('after bSSI')
+            #TODO: mesh the building with element size = 1 m
+            building.equivalentBeamMesh(1, logger)
+            #TODO: calculate the greenfield displacement
+            axis1_gf, axis2_gf = building.greenFieldDisp_zhao2022_determine(dvmaxOverHe, eta, excavation_depth, dlmaxOverdvmax, construction_area_corners, logger)
+            #### This part needs better implementation    
+            # if structure_cvi == 0:#steel
+            #     Eb = 3000000000
+            #     EoverG = 12.5
+            # elif structure_cvi == 5:#concrete
+            #     Eb = 3000000000
+            #     EoverG = 12.5
+            # elif structure_cvi == 20:#mixed
+            #     Eb = 3000000000
+            #     EoverG = 12.5
+            # elif structure_cvi == 50:
+            #     Eb = 3000000000
+            #     EoverG = 2.6
+            # else:
+            #     Eb = 3000000000  # default
+            #     EoverG = 2.6
+            try:
+                maximumStrain, damageState = building.calculate_damageState_ASRE_timo(axis1_gf, axis2_gf, logger)
+                logger.debug("debug 4")
+                logger.debug('results: '+'\n'+str(maximumStrain))
+                logger.debug('results: '+'\n'+str(damageState))
+                building.maximumStrain = maximumStrain
+                building.damageState = damageState
+            except Exception as e:
+                logger.error("Error, type; {0}, error args: {1}, error: {2}".format(type(e), e.args, e))
+        if bProbSSI:
+            maximumStrain, damageStat = building.calculate_damageState_ASRE_timoMC(logger)
+    
+    
     now = datetime.now()  # current date and time
     date_time_str = now.strftime("_%Y%m%d_%H%M%S")
 
@@ -407,6 +513,7 @@ def mainBegrensSkade_Excavation(
     logger.info("TIME - writing results to shape")
     building_shapefile = output_ws + os.sep + building_name + ".shp"
     building_shapefile_prj = output_ws + os.sep + building_name + "_prj.shp"
+    #TODO: if bSSI: write damage state to shape file
     BegrensSkadeLib.writeBuildingsToShape(building_shapefile, buildings, output_proj, filterValue, logger)
     #Utils.projectLayer(building_shapefile,building_shapefile_prj,str(working_proj), str(output_proj), "polygon")
 
@@ -654,8 +761,10 @@ def mainBegrensSkade_ImpactMap(
         for px_ind_i in range(0, tot_px):
             for px_ind_j in range(0, tot_px):
                 if px_ind_i == px_ind_j:
-                    log_dvmax_cov[px_ind_i, px_ind_j] = log_dvmax_var + dvmax_nugget_ratio*dvmax_mean
-                    log_eta_cov[px_ind_i, px_ind_j] = log_eta_var + eta_nugget_ratio*eta_mean
+                    # log_dvmax_cov[px_ind_i, px_ind_j] = log_dvmax_var + dvmax_nugget_ratio*dvmax_mean
+                    # log_eta_cov[px_ind_i, px_ind_j] = log_eta_var + eta_nugget_ratio*eta_mean
+                    log_dvmax_cov[px_ind_i, px_ind_j] = log_dvmax_var
+                    log_eta_cov[px_ind_i, px_ind_j] = log_eta_var
                 else:
                     row_i = px_ind_i // cols
                     row_j = px_ind_j // cols
@@ -666,8 +775,11 @@ def mainBegrensSkade_ImpactMap(
                     dist_ij = np.sqrt((corner_i.x - corner_j.x)**2 + 
                                     (corner_i.y - corner_j.y)**2)
                     
-                    log_dvmax_cov[px_ind_i, px_ind_j] = BegrensSkadeLib.gaussianAutoCorr(dist_ij, (log_dvmax_var-log_dvmax_nug), log_dvmax_nug, dvmax_range)*log_dvmax_var
-                    log_eta_cov[px_ind_i, px_ind_j] = BegrensSkadeLib.gaussianAutoCorr(dist_ij, (log_eta_var-log_eta_nug), log_eta_nug, eta_range)*log_eta_var
+                    # log_dvmax_cov[px_ind_i, px_ind_j] = BegrensSkadeLib.gaussianAutoCorr(dist_ij, (log_dvmax_var-log_dvmax_nug), log_dvmax_nug, dvmax_range)*log_dvmax_var
+                    # log_eta_cov[px_ind_i, px_ind_j] = BegrensSkadeLib.gaussianAutoCorr(dist_ij, (log_eta_var-log_eta_nug), log_eta_nug, eta_range)*log_eta_var
+
+                    log_dvmax_cov[px_ind_i, px_ind_j] = BegrensSkadeLib.gaussianAutoCorr(dist_ij, (log_dvmax_var-log_dvmax_nug), log_dvmax_nug, dvmax_range)*log_dvmax_var + log_dvmax_nug
+                    log_eta_cov[px_ind_i, px_ind_j] = BegrensSkadeLib.gaussianAutoCorr(dist_ij, (log_eta_var-log_eta_nug), log_eta_nug, eta_range)*log_eta_var + log_eta_nug
         logger.debug("Covariance matrix computed")
         ######## Generate samples for log_dvmax and log_eta
         log_dvmax_eig_val, log_dvmax_eig_vec = scipy.linalg.eigh(log_dvmax_cov)

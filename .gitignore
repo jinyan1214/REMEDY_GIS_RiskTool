@@ -1,3 +1,6 @@
 testResult/*
 log/*
 lyr/*
+ImpactMap_prob.tif
+__pycache__/*
+.vscode/*

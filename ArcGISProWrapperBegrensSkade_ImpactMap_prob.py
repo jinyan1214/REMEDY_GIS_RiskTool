@@ -1,8 +1,8 @@
 coding_guide = 0 #avoids some sort of coding interpretation bugs
 # Prepared for open source release August 2022
 
-log_path = r'C:\Users\Jinyan\Documents\ArcGIS\Projects\GIBV_test\REMEDY_GIS_RiskTool_JZ\log'
-lyr_path = r'C:\Users\Jinyan\Documents\ArcGIS\Projects\GIBV_test\REMEDY_GIS_RiskTool_JZ\lyr'
+log_path = r'C:\Users\Jinyan\Documents\ArcGIS\Projects\CampusUlleval2\REMEDY_GIS_RiskTool_JZ\log'
+lyr_path = r'C:\Users\Jinyan\Documents\ArcGIS\Projects\CampusUlleval2\REMEDY_GIS_RiskTool_JZ\lyr'
 
 import arcpy
 import sys

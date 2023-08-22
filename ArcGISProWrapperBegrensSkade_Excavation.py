@@ -1,8 +1,9 @@
 coding_guide = 0 #avoids some sort of coding interpretation bugs
 # Prepared for open source release August 2022
 
-log_path = r'C:\Users\AOL\Documents\ArcGIS\BegrensSkadeCode\log'
-lyr_path = r'C:\Users\AOL\Documents\ArcGIS\BegrensSkadeCode\lyr'
+log_path = r'C:\Users\Jinyan\Documents\ArcGIS\Projects\CampusUlleval2\REMEDY_GIS_RiskTool_JZ\log'
+lyr_path = r'C:\Users\Jinyan\Documents\ArcGIS\Projects\CampusUlleval2\REMEDY_GIS_RiskTool_JZ\lyr'
+# ASRElib_path = r'C:\Users\Jinyan\Desktop\NGI_GIBV\ASRETimoshenko\ASRE_Timo2\x64\Release\ASRE_Timo2.dll'
 
 import arcpy
 import sys
@@ -58,7 +59,7 @@ else:
     excavation_depth = None
     short_term_curve = None
 
-bLongterm = arcpy.GetParameter(8)
+bLongterm = arcpy.GetParameter(9)
 if bShortterm == False and bLongterm == False:
     arcpy.AddError("Please choose Short term or Long term settlements, or both")
     sys.exit()
@@ -88,7 +89,8 @@ else:
     janbu_m = None
     consolidation_time = None
 
-bVulnerability = arcpy.GetParameter(20)
+bVulnerability = arcpy.GetParameter(21)
+logger.debug('bVulnerability is : '+str(bVulnerability))
 if bVulnerability:
     fields = arcpy.ListFields(building_polys_fl)
     field_map = {}
@@ -97,17 +99,17 @@ if bVulnerability:
     vuln_idx_count = 0
 
     try:
-        foundation_field = field_map[arcpy.GetParameterAsText(21)]
+        foundation_field = field_map[arcpy.GetParameterAsText(22)]
         vuln_idx_count += 1
     except:
         foundation_field = None
     try:
-        structure_field = field_map[arcpy.GetParameterAsText(22)]
+        structure_field = field_map[arcpy.GetParameterAsText(23)]
         vuln_idx_count += 1
     except:
         structure_field = None
     try:
-        status_field = field_map[arcpy.GetParameterAsText(23)]
+        status_field = field_map[arcpy.GetParameterAsText(24)]
         vuln_idx_count += 1
     except:
         status_field = None
@@ -123,6 +125,149 @@ else:
     structure_field = None
     status_field = None
 
+#TODO: Get the input for probabilsitc settlement curve
+if short_term_curve == "Zhao et al. (2023) Probabilistic":
+    bProbCurve = True
+else:
+    bProbCurve = False
+logger.debug('short_term_curve is : '+str(short_term_curve))
+logger.debug('bProbCurve is : '+str(bProbCurve))
+dvmaxOverHeRF = None
+dloverdvRV = None
+etaRF = None
+MCsampleSize = None
+outputQuantile = None
+if bProbCurve:
+    #dvmax here is the short-term of dvmaxOverHe
+    dvamxOverList = str(arcpy.GetParameter(32)).split()
+    mean = float(dvamxOverList[0])/100.0
+    cv = float(dvamxOverList[1])
+    dist = dvamxOverList[2]
+    range = float(dvamxOverList[3])
+    nug = float(dvamxOverList[4])
+    dvmaxOverHeRF = BegrensSkadeLib.RandomFieldmodel(
+        mean, cv, dist, 'Gaussian', range, nug
+        )
+    etaList = str(arcpy.GetParameter(33)).split()
+    mean = float(etaList[0])
+    cv = float(etaList[1])
+    dist = etaList[2]
+    range = float(etaList[3])
+    nug = float(etaList[4])
+    etaRF = BegrensSkadeLib.RandomFieldmodel(
+        mean, cv, dist, 'Gaussian', range, nug
+        )
+    dlOverdvList = str(arcpy.GetParameter(34)).split()
+    mean = float(dlOverdvList[0])
+    cv = float(dlOverdvList[1])
+    dist = dlOverdvList[2]
+    dloverdvRV = BegrensSkadeLib.RandomVariablemodel(mean, cv, dist)
+    #dloverdvRF = BegrensSkadeLib.RandomFieldmodel(dvmaxNominal, dvmaxStd, dvmaxDist, dvmaxVRM, dvmaxRange, dvmaxNug)
+    #etaRF = BegrensSkadeLib.RandomFieldmodel(dvmaxNominal, dvmaxStd, dvmaxDist, dvmaxVRM, dvmaxRange, dvmaxNug)
+    MCsampleSize = arcpy.GetParameter(35)
+    # MCsampleSize = int(MCsampleSize)
+    outputQuantile = arcpy.GetParameter(36)
+    logger.debug('etaRF.mean is: '+str(etaRF.mean))
+#TODO: Get the input for deterministic SSI
+dvmax = None
+eta = None
+dlmax = None
+Es = None
+nis = None
+buildingFeatureFieldListDeterm = None
+bSSI = arcpy.GetParameter(31)
+logger.debug('bSSI is : '+str(bSSI))
+if bSSI:
+    if not bShortterm:
+        arcpy.AddError('Soil-Structure Interaction analysis only supports short-term ground movements.')
+    if short_term_curve != 'Zhao et al. (2022) Deterministic':
+        logger.debug('short_term_curve is: '+str(short_term_curve))
+        arcpy.AddError("Timoshenko beam SSI (Deterministic) only supports short-term ground movement of Zhao et al. (2022) Deterministic")
+    # try:
+    # Get paremeters for ground movement
+    gf_params = str(arcpy.GetParameter(8)).split()
+    logger.debug('gf_params is : '+str(gf_params))
+    dvmaxOverHe = float(gf_params[0])
+    logger.debug('dvmaxOverHe is : '+str(dvmaxOverHe))
+    eta = float(gf_params[1])
+    dlmaxOverdvmax = float(gf_params[2])
+    He = arcpy.GetParameter(6)
+    dvmax = dvmaxOverHe/100.0*He
+    # Get field name for Eb, Es, phi_int, dfoot, bfoot
+    fields = arcpy.ListFields(building_polys_fl)
+    logger.debug('fields is : '+str(fields))
+    field_map = {}
+    for idx, field in enumerate(fields):
+        field_map[field.name] = idx - 2
+    logger.debug('field_map is : '+str(field_map))
+    SSI_idx_count = 0
+    Eb_field = field_map[arcpy.GetParameterAsText(37)]
+    SSI_idx_count += 1
+    phi_int_field = field_map[arcpy.GetParameterAsText(38)]
+    SSI_idx_count += 1
+    dfoot_field = field_map[arcpy.GetParameterAsText(39)]
+    SSI_idx_count += 1
+    EoverG_field = field_map[arcpy.GetParameterAsText(40)]
+    SSI_idx_count += 1  
+    qz_field = field_map[arcpy.GetParameterAsText(41)]
+    SSI_idx_count += 1 
+    Es = arcpy.GetParameter(42)
+    SSI_idx_count += 1
+    nis = arcpy.GetParameter(43)
+    SSI_idx_count += 1 
+    buildingFeatureFieldListDeterm = [Eb_field, phi_int_field, dfoot_field, EoverG_field, qz_field]  
+    # except:
+    #     arcpy.AddWarning("No valid deterministic SSI input - disabling SSI!")
+
+#TODO: Get the input for probabilistic SSI
+EsRF = None
+buildingFeatureFieldListProb = None
+bProbSSI = arcpy.GetParameter(44)
+logger.debug('bProbSSI is : '+str(bProbSSI))
+if bProbSSI:
+    if not bProbCurve:
+        arcpy.AddError('Probabilistic Soil-Structure Interaction analysis requires probabilistic short-term ground movement') 
+    try:
+        # Get paremeters for Es randomrfield
+        EsRFList = str(arcpy.GetParameter(51)).split()
+        mean = float(EsRFList[0])
+        cv = float(EsRFList[1])
+        dist = EsRFList[2]
+        range = float(EsRFList[3])
+        nug = float(EsRFList[4])
+        EsRF = BegrensSkadeLib.RandomFieldmodel(mean, cv, dist, 'Gaussian', range, nug)
+        
+        # Get parameters for Ebmean, Ebstd, phi_int, dfoot, bfoot
+        fields = arcpy.ListFields(building_polys_fl)
+        field_map = {}
+        for idx, field in enumerate(fields):
+            field_map[field.name] = idx - 2
+        SSI_idx_count = 0
+        Ebmean_field = field_map[arcpy.GetParameterAsText(45)]
+        SSI_idx_count += 1
+        Ebcv_field = field_map[arcpy.GetParameterAsText(46)]
+        SSI_idx_count += 1
+        phi_int_field = field_map[arcpy.GetParameterAsText(38)]
+        SSI_idx_count += 1
+        dfoot_field = field_map[arcpy.GetParameterAsText(39)]
+        SSI_idx_count += 1
+        EoverGmean_field = field_map[arcpy.GetParameterAsText(47)]
+        SSI_idx_count += 1
+        EoverGcv_field = field_map[arcpy.GetParameterAsText(48)]
+        SSI_idx_count += 1
+        qzmean_field = field_map[arcpy.GetParameterAsText(49)]
+        SSI_idx_count += 1
+        qzcv_field = field_map[arcpy.GetParameterAsText(50)]
+        SSI_idx_count += 1
+        nis = arcpy.GetParameter(43)
+        SSI_idx_count += 1 
+        buildingFeatureFieldListProb = [Ebmean_field, Ebcv_field,
+                                          EoverGmean_field, EoverGcv_field,
+                                          qzmean_field, qzcv_field,
+                                          phi_int_field, dfoot_field
+                                          ]
+    except:
+        arcpy.AddWarning("No valid probabilistic SSI input - disabling SSI!")
 ##############  GET INPUT PROJECTIONS ####################
 building_spatial_ref = arcpy.Describe(building_polys_fl).spatialReference
 excavation_spatial_ref = arcpy.Describe(excavation_polys_fl).spatialReference
@@ -205,6 +350,7 @@ else:
 
 ############  RUN BEGRENS SKADE CORE FUNCTIONS   ##############
 arcpy.AddMessage("Running mainBegrensSkade_Excavation...")
+
 try:
     outputFiles = BegrensSkade.mainBegrensSkade_Excavation(
         logger,
@@ -232,6 +378,19 @@ try:
         fieldNameFoundation=foundation_field,
         fieldNameStructure=structure_field,
         fieldNameStatus=status_field,
+        bProbCurve = bProbCurve,
+        dvmaxRF = dvmaxOverHeRF,
+        dloverdvRV = dloverdvRV,
+        etaRF = etaRF,
+        MCsampleSize = MCsampleSize,
+        outputQuantile = outputQuantile,
+        bSSI=bSSI,
+        buildingFeatureFieldListDeterm = buildingFeatureFieldListDeterm,
+        Es = Es,
+        nis = nis,
+        bProbSSI=bProbSSI,
+        EsRF=EsRF,
+        buildingFeatureFieldListProb = buildingFeatureFieldListProb,
         )
 except Exception:
     # Print original traceback info
@@ -283,19 +442,19 @@ lyr_group = lyr_path + os.sep + "GIBV_RUN_.lyrx"
 lyr_group = pMap.addLayer(arcpy.mp.LayerFile(lyr_group), "TOP")[0]
 lyr_group.name = feature_name
 
-if addCorners:
-    Utils_arcpy.addLayerToGroup(pMap, corners_Shapefile_result, lyr_corners, lyr_group)
-if addWalls:
-    Utils_arcpy.addLayerToGroup(pMap, walls_Shapefile_result, lyr_walls, lyr_group)
-if bVulnerability:
-    if addRiskAngle:
-        Utils_arcpy.addLayerToGroup(pMap, buildings_Shapefile_result, lyr_building_risk_a,lyr_group)
-    if addRiskSettl:
-        Utils_arcpy.addLayerToGroup(pMap, buildings_Shapefile_result, lyr_building_risk_sv, lyr_group)
-if addImpactAngle:
-    Utils_arcpy.addLayerToGroup(pMap, buildings_Shapefile_result, lyr_building_a_max, lyr_group)
-if addImpactSettl:
-    Utils_arcpy.addLayerToGroup(pMap, buildings_Shapefile_result, lyr_building_sv_max, lyr_group)
+# if addCorners:
+#     Utils_arcpy.addLayerToGroup(pMap, corners_Shapefile_result, lyr_corners, lyr_group)
+# if addWalls:
+#     Utils_arcpy.addLayerToGroup(pMap, walls_Shapefile_result, lyr_walls, lyr_group)
+# if bVulnerability:
+#     if addRiskAngle:
+#         Utils_arcpy.addLayerToGroup(pMap, buildings_Shapefile_result, lyr_building_risk_a,lyr_group)
+#     if addRiskSettl:
+#         Utils_arcpy.addLayerToGroup(pMap, buildings_Shapefile_result, lyr_building_risk_sv, lyr_group)
+# if addImpactAngle:
+#     Utils_arcpy.addLayerToGroup(pMap, buildings_Shapefile_result, lyr_building_a_max, lyr_group)
+# if addImpactSettl:
+#     Utils_arcpy.addLayerToGroup(pMap, buildings_Shapefile_result, lyr_building_sv_max, lyr_group)
 
 #arcpy.SelectLayerByAttribute_management(buildings_Shapefile_result, "CLEAR_SELECTION")
 
